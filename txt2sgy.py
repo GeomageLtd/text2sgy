@@ -2,21 +2,37 @@ import numpy as np
 import os
 import struct
 from datetime import datetime
+import csv  # Importing the csv module
+import argparse  # For command line arguments
 
 def read_text_data(file_path):
     """
-    Read a text file with one sample per line
+    Read a text file with one sample per line or a CSV file with Time and Value columns
     """
-    with open(file_path, 'r') as f:
-        lines = f.readlines()
+    if file_path.endswith('.csv'):
+        # Read CSV file
+        with open(file_path, 'r') as f:
+            reader = csv.reader(f)
+            next(reader)  # Skip header
+            samples = [float(row[1]) for row in reader if row and len(row) > 1]
+    else:
+        # Read text file
+        with open(file_path, 'r') as f:
+            lines = f.readlines()
+        
+        # Convert lines to float values
+        samples = [float(line.strip()) for line in lines if line.strip()]
     
-    # Convert lines to float values
-    samples = [float(line.strip()) for line in lines if line.strip()]
     return np.array(samples)
 
-def create_segy_file(input_file, output_file):
+def create_segy_file(input_file, output_file, sample_interval=2000):
     """
     Convert text file with amplitude values to SEG-Y format
+    
+    Parameters:
+    input_file (str): Path to the input text or CSV file
+    output_file (str): Path to the output SEG-Y file
+    sample_interval (int): Sample interval in microseconds (default: 2000 = 2ms)
     """
     # Read the sample data
     data = read_text_data(input_file)
@@ -31,11 +47,11 @@ def create_segy_file(input_file, output_file):
         f.write(ebcdic_header)
         
         # Write Binary header (400 bytes)
-        binary_header = create_binary_header(num_samples)
+        binary_header = create_binary_header(num_samples, sample_interval)
         f.write(binary_header)
         
         # Write trace data
-        write_trace(f, data)
+        write_trace(f, data, sample_interval)
     
     print(f"Successfully converted {input_file} to SEG-Y format: {output_file}")
     print(f"Number of samples: {num_samples}")
@@ -72,16 +88,16 @@ def create_ebcdic_header():
             
     return bytes(header)
 
-def create_binary_header(num_samples):
+def create_binary_header(num_samples, sample_interval=2000):
     """
     Create Binary header (400 bytes)
+    
+    Parameters:
+    num_samples (int): Number of samples in the trace
+    sample_interval (int): Sample interval in microseconds (default: 2000 = 2ms)
     """
     # Initialize with zeros
     header = bytearray(400)
-    
-    # Set important values
-    # Bytes 3225-3226 (1-2): Sample interval in microseconds (default to 1000 = 1ms)
-    sample_interval = 2000
     struct.pack_into('>H', header, 16, sample_interval)
     
     # Bytes 3227-3228 (3-4): Number of samples per trace
@@ -107,9 +123,14 @@ def create_binary_header(num_samples):
     
     return header
 
-def write_trace(f, data):
+def write_trace(f, data, sample_interval=2000):
     """
     Write a single SEG-Y trace
+    
+    Parameters:
+    f (file): Output file object
+    data (numpy.ndarray): Array of trace samples
+    sample_interval (int): Sample interval in microseconds (default: 2000 = 2ms)
     """
     # Create trace header (240 bytes)
     trace_header = bytearray(240)
@@ -120,7 +141,6 @@ def write_trace(f, data):
     struct.pack_into('>H', trace_header, 114, num_samples)
     
     # Bytes 117-118: Sample interval in microseconds
-    sample_interval = 1000  # 1ms
     struct.pack_into('>H', trace_header, 116, sample_interval)
     
     # Write trace header
@@ -131,16 +151,37 @@ def write_trace(f, data):
         f.write(struct.pack('>f', sample))
 
 def main():
-    # Get input and output filenames
-    input_file = input("Enter the input text file path: ")
-    output_file = input("Enter the output SEG-Y file path (or press Enter to use the same name with .sgy extension): ")
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description='Convert text/CSV data to SEG-Y format')
+    parser.add_argument('input_file', type=str, help='Path to the input text or CSV file')
+    parser.add_argument('-o', '--output', type=str, help='Path to the output SEG-Y file (default: input filename with .sgy extension)')
+    parser.add_argument('-s', '--sample-interval', type=int, default=2000, 
+                        help='Sample interval in microseconds (default: 2000 = 2ms)')
     
+    # Parse arguments
+    args = parser.parse_args()
+    
+    input_file = args.input_file
+    output_file = args.output
+    
+    # If no output file is specified, use the input filename with .sgy extension
     if not output_file:
-        # Use the same name but with .sgy extension
         output_file = os.path.splitext(input_file)[0] + '.sgy'
     
+    # Get the sample interval
+    sample_interval = args.sample_interval
+    
+    # Check if input file exists
+    if not os.path.exists(input_file):
+        print(f"Error: Input file '{input_file}' does not exist.")
+        return
+    
     # Convert the file
-    create_segy_file(input_file, output_file)
+    try:
+        create_segy_file(input_file, output_file, sample_interval)
+    except ValueError as e:
+        print(f"Error: {e}")
+        return
 
 if __name__ == "__main__":
     main()
